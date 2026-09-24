@@ -1,79 +1,87 @@
 """
 symbol_table.py
 ----------------
-Estructura de datos de la tabla de símbolos para el DSL de Arduino.
+Tabla de símbolos del DSL de Arduino.
 
-Se manejan dos espacios de nombres, ya que en el DSL los pines se
-identifican por número (INT) y las variables por nombre (ID):
+En esta versión los pines se declaran con un identificador propio
+(`pin led = 13 as OUTPUT;`), igual que las variables (`var espera =
+500;`). Por eso ambos comparten un único espacio de nombres: un mismo
+nombre no puede usarse dos veces, sin importar si la primera vez fue
+para un pin y la segunda para una variable (o viceversa).
 
-    - pines:     clave = número de pin (str), valor = Symbol(kind='pin')
-    - variables: clave = nombre de la variable (str), valor = Symbol(kind='var')
+Cada símbolo guarda:
+    - Identificador   (name)
+    - Tipo de pin      (pin_type: 'digital' | 'analog', solo pines)
+    - Modo de operación (mode: OUTPUT/INPUT/INPUT_PULLUP, solo pines)
+    - Pin físico        (physical_pin: '13', 'A0', ..., solo pines)
+    - Línea de declaración (line)
+    - (para variables) valor inicial (value)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, List
 
 
 @dataclass
 class Symbol:
-    name: str            # nombre o número de pin, como texto
-    kind: str             # 'pin' o 'var'
-    line: int             # línea donde fue declarado
-    mode: Optional[str] = None   # OUTPUT / INPUT / INPUT_PULLUP (solo pines)
-    value: Optional[int] = None  # valor entero inicial (solo variables)
+    name: str
+    kind: str                      # 'pin' o 'var'
+    line: int
+    pin_type: Optional[str] = None      # 'digital' | 'analog' (solo pines)
+    mode: Optional[str] = None          # OUTPUT/INPUT/INPUT_PULLUP (solo pines)
+    physical_pin: Optional[str] = None  # '13', 'A0', ... (solo pines)
+    value: Optional[int] = None         # valor inicial (solo variables)
 
 
 class SymbolTable:
-    """Tabla de símbolos plana (el DSL no tiene ámbitos anidados: los
-    pines y variables de Arduino son, en la práctica, globales)."""
+    """Espacio de nombres único (sin ámbitos anidados: en el DSL los
+    pines y variables son, en la práctica, globales)."""
 
     def __init__(self):
-        self.pins: Dict[str, Symbol] = {}
-        self.vars: Dict[str, Symbol] = {}
+        self.symbols: Dict[str, Symbol] = {}
 
-    # ---------------- Pines ----------------
-    def declare_pin(self, number: str, mode: str, line: int) -> Optional[str]:
-        """Declara un pin. Devuelve un mensaje de error (str) si ya
-        existía, o None si la declaración fue exitosa."""
-        if number in self.pins:
-            prev = self.pins[number]
-            return (f"Línea {line}: el pin {number} ya fue declarado "
-                    f"en la línea {prev.line} (modo {prev.mode}).")
-        self.pins[number] = Symbol(name=number, kind='pin', line=line, mode=mode)
+    # ---------------- Declaración ----------------
+    def declare_pin(self, name: str, physical_pin: str, pin_type: str,
+                     mode: str, line: int) -> Optional[str]:
+        """Declara un pin con nombre. Devuelve un mensaje de error si
+        el identificador ya existía, o None si fue exitosa."""
+        if name in self.symbols:
+            prev = self.symbols[name]
+            return (f"Línea {line}: el identificador '{name}' ya fue "
+                    f"declarado en la línea {prev.line} "
+                    f"(como {prev.kind}).")
+        self.symbols[name] = Symbol(
+            name=name, kind='pin', line=line, pin_type=pin_type,
+            mode=mode, physical_pin=physical_pin,
+        )
         return None
 
-    def is_pin_declared(self, number: str) -> bool:
-        return number in self.pins
-
-    def get_pin(self, number: str) -> Optional[Symbol]:
-        return self.pins.get(number)
-
-    # ---------------- Variables ----------------
     def declare_var(self, name: str, value: int, line: int) -> Optional[str]:
-        if name in self.vars:
-            prev = self.vars[name]
-            return (f"Línea {line}: la variable '{name}' ya fue declarada "
-                    f"en la línea {prev.line}.")
-        self.vars[name] = Symbol(name=name, kind='var', line=line, value=value)
+        if name in self.symbols:
+            prev = self.symbols[name]
+            return (f"Línea {line}: el identificador '{name}' ya fue "
+                    f"declarado en la línea {prev.line} "
+                    f"(como {prev.kind}).")
+        self.symbols[name] = Symbol(name=name, kind='var', line=line, value=value)
         return None
 
-    def is_var_declared(self, name: str) -> bool:
-        return name in self.vars
+    # ---------------- Consulta ----------------
+    def is_declared(self, name: str) -> bool:
+        return name in self.symbols
 
-    def get_var(self, name: str) -> Optional[Symbol]:
-        return self.vars.get(name)
+    def get(self, name: str) -> Optional[Symbol]:
+        return self.symbols.get(name)
 
     # ---------------- Utilidades ----------------
-    def all_symbols(self) -> List[Symbol]:
-        return list(self.pins.values()) + list(self.vars.values())
-
     def as_rows(self):
-        """Devuelve filas (tuplas) listas para imprimir en una tabla."""
+        """Filas (tuplas) listas para imprimir en el reporte:
+        (identificador, tipo, modo, pin_físico, valor, línea)."""
         rows = []
-        for sym in self.pins.values():
-            rows.append((sym.name, "pin", sym.mode, "-", sym.line))
-        for sym in self.vars.values():
-            rows.append((sym.name, "var", "-", sym.value, sym.line))
-        # Orden estable por línea de declaración
-        rows.sort(key=lambda r: r[4])
+        for sym in self.symbols.values():
+            if sym.kind == 'pin':
+                rows.append((sym.name, sym.pin_type, sym.mode,
+                              sym.physical_pin, "-", sym.line))
+            else:
+                rows.append((sym.name, "var", "-", "-", sym.value, sym.line))
+        rows.sort(key=lambda r: r[5])
         return rows

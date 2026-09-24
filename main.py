@@ -3,8 +3,7 @@ main.py
 -------
 Punto de entrada del analizador del DSL de Arduino Uno.
 
-Uso (desde Windows, en la carpeta del proyecto y con el entorno
-virtual activado):
+Uso (Windows, con el entorno virtual activado):
 
     python main.py ejemplos\\ejemplo_valido.dsl
     python main.py ejemplos\\ejemplo_con_errores.dsl
@@ -13,15 +12,18 @@ Flujo:
     1. Léxico + sintáctico: ANTLR4 tokeniza y parsea el archivo.
        Los errores léxicos/sintácticos se capturan con un
        ErrorListener personalizado (no lanzan excepciones).
-    2. Semántico: SemanticAnalyzer recorre el árbol y valida
-       declaraciones, pines, modos, identificadores y retardos.
+    2. Semántico: SemanticAnalyzer recorre el árbol y valida pines,
+       identificadores, modos y retardos (ver semantic_analyzer.py).
     3. Reporte: se imprime la tabla de símbolos y el listado de
-       errores (si los hay).
+       errores/advertencias (si los hay).
+
+La función `analizar_texto` se reutiliza desde pruebas.py para poder
+analizar fragmentos de código sin necesidad de escribir un archivo.
 """
 
 import sys
 
-from antlr4 import FileStream, CommonTokenStream
+from antlr4 import FileStream, InputStream, CommonTokenStream
 from antlr4.error.ErrorListener import ErrorListener
 
 from ArduinoDSLLexer import ArduinoDSLLexer
@@ -42,10 +44,10 @@ class CollectingErrorListener(ErrorListener):
         self.errors.append(f"Línea {line}:{column} - {msg}")
 
 
-def analizar_archivo(ruta: str):
+def _analizar_stream(entrada):
+    """Lógica común: corre lexer -> parser -> analizador semántico
+    sobre un stream de entrada de ANTLR (de archivo o de texto)."""
     error_listener = CollectingErrorListener()
-
-    entrada = FileStream(ruta, encoding="utf-8")
 
     lexer = ArduinoDSLLexer(entrada)
     lexer.removeErrorListeners()
@@ -65,6 +67,17 @@ def analizar_archivo(ruta: str):
     return error_listener.errors, analyzer
 
 
+def analizar_archivo(ruta: str):
+    """Analiza un archivo .dsl en disco."""
+    return _analizar_stream(FileStream(ruta, encoding="utf-8"))
+
+
+def analizar_texto(codigo: str):
+    """Analiza un fragmento de código DSL dado como string (usado por
+    pruebas.py)."""
+    return _analizar_stream(InputStream(codigo))
+
+
 def imprimir_tabla_simbolos(analyzer: SemanticAnalyzer):
     filas = analyzer.symbol_table.as_rows()
     print("\n=== TABLA DE SÍMBOLOS ===")
@@ -72,11 +85,13 @@ def imprimir_tabla_simbolos(analyzer: SemanticAnalyzer):
         print("(vacía)")
         return
 
-    encabezado = f"{'NOMBRE':<10}{'TIPO':<8}{'MODO':<15}{'VALOR':<8}{'LÍNEA':<6}"
+    encabezado = (f"{'ID':<10}{'TIPO':<10}{'MODO':<15}"
+                  f"{'PIN FÍSICO':<12}{'VALOR':<8}{'LÍNEA':<6}")
     print(encabezado)
     print("-" * len(encabezado))
-    for nombre, tipo, modo, valor, linea in filas:
-        print(f"{nombre:<10}{tipo:<8}{str(modo):<15}{str(valor):<8}{linea:<6}")
+    for nombre, tipo, modo, pin_fisico, valor, linea in filas:
+        print(f"{nombre:<10}{str(tipo):<10}{str(modo):<15}"
+              f"{str(pin_fisico):<12}{str(valor):<8}{linea:<6}")
 
 
 def imprimir_reporte_errores(errores_sintacticos, errores_semanticos, advertencias):

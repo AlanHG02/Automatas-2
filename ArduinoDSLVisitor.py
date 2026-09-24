@@ -24,6 +24,11 @@ class ArduinoDSLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by ArduinoDSLParser#pinRef.
+    def visitPinRef(self, ctx:ArduinoDSLParser.PinRefContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by ArduinoDSLParser#varDeclaration.
     def visitVarDeclaration(self, ctx:ArduinoDSLParser.VarDeclarationContext):
         return self.visitChildren(ctx)
@@ -46,6 +51,11 @@ class ArduinoDSLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by ArduinoDSLParser#repeatStatement.
     def visitRepeatStatement(self, ctx:ArduinoDSLParser.RepeatStatementContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by ArduinoDSLParser#number.
+    def visitNumber(self, ctx:ArduinoDSLParser.NumberContext):
         return self.visitChildren(ctx)
 
 

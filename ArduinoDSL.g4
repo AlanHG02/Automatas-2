@@ -4,7 +4,7 @@ grammar ArduinoDSL;
 // REGLAS DEL PARSER
 // ============================================================
 
-// Programa: una secuencia de sentencias hasta fin de archivo
+// Estructura del programa: una secuencia de sentencias hasta EOF
 program
     : statement* EOF
     ;
@@ -18,40 +18,56 @@ statement
     | repeatStatement
     ;
 
-// Declaración de un pin y su modo:  pin 13 as OUTPUT;
+// Declaración de pines:  pin led = 13 as OUTPUT;   pin sensor = A0 as INPUT;
+// El identificador (ID) es el nombre simbólico con el que luego se
+// referencia el pin en 'set' / 'read'. pinRef es el pin físico real.
 pinDeclaration
-    : 'pin' INT 'as' MODE ';'
+    : 'pin' ID '=' pinRef 'as' MODE ';'
     ;
 
-// Declaración de una variable entera:  var espera = 500;
+pinRef
+    : INT          // pin digital, p. ej. 13
+    | ANALOG_PIN   // pin analógico, p. ej. A0
+    ;
+
+// Declaración de variable:  var espera = 500;   var ajuste = -50;
 varDeclaration
-    : 'var' ID '=' INT ';'
+    : 'var' ID '=' number ';'
     ;
 
-// Escritura digital sobre un pin:  set 13 = HIGH;
+// Instrucción de salida (escritura digital):  set led = HIGH;
 setStatement
-    : 'set' INT '=' LEVEL ';'
+    : 'set' ID '=' LEVEL ';'
     ;
 
-// Lectura de un pin:  read 7;
+// Instrucción de entrada (lectura digital):  read boton;
 readStatement
-    : 'read' INT ';'
+    : 'read' ID ';'
     ;
 
-// Retardo en milisegundos, con literal o variable:  delay 1000;  delay espera;
+// Retardo, en milisegundos. Acepta un literal con signo o una variable:
+//   delay 500;   delay -100;   delay espera;
 delayStatement
-    : 'delay' (INT | ID) ';'
+    : 'delay' (number | ID) ';'
     ;
 
 // Bloque repetido N veces:  repeat 5 times { ... }
 repeatStatement
-    : 'repeat' (INT | ID) 'times' '{' statement* '}'
+    : 'repeat' (number | ID) 'times' '{' statement* '}'
+    ;
+
+// Número entero con signo opcional (permite representar retardos
+// negativos para que el analizador semántico pueda detectarlos y
+// reportarlos como error).
+number
+    : MINUS? INT
     ;
 
 // ============================================================
 // REGLAS DEL LEXER
-// (el orden importa: las reglas explícitas se prueban en el
-//  orden en que aparecen, por eso MODE y LEVEL van antes que ID)
+// (el orden importa: ante un empate de longitud, ANTLR4 elige la
+//  regla definida primero; por eso MODE, LEVEL y ANALOG_PIN van
+//  antes que ID)
 // ============================================================
 
 MODE
@@ -65,12 +81,21 @@ LEVEL
     | 'LOW'
     ;
 
+// Pines analógicos del Arduino Uno: A0-A5
+ANALOG_PIN
+    : 'A' [0-5]
+    ;
+
 ID
     : [a-zA-Z_][a-zA-Z_0-9]*
     ;
 
 INT
     : [0-9]+
+    ;
+
+MINUS
+    : '-'
     ;
 
 WS
