@@ -2,89 +2,112 @@
 hardware_catalog.py
 ---------------------
 Catálogo estático de las características físicas del Arduino Uno
-(Rev3, ATmega328P). No depende del programa del usuario: es una
-referencia fija que el analizador semántico consulta para validar
-las declaraciones del usuario contra el hardware real.
+(Rev3, ATmega328P).
+
+A diferencia de la tabla de símbolos (que registra lo que el programa
+del usuario declaró), este módulo NO depende del programa analizado:
+es una referencia fija de lo que la placa permite. El analizador
+semántico lo consulta para validar las declaraciones del usuario
+contra el hardware real.
 """
 
+from dataclasses import dataclass
 from typing import Dict, Optional, Set
 
 BOARD_NAME = "Arduino Uno (Rev3, ATmega328P)"
 
 # ------------------------------------------------------------------
-# Pines digitales: 0-13
+# Pines digitales
 # ------------------------------------------------------------------
 DIGITAL_PIN_MIN = 0
 DIGITAL_PIN_MAX = 13
 
-# ------------------------------------------------------------------
-# Pines analógicos: A0-A5
-# ------------------------------------------------------------------
-ANALOG_PINS: Set[str] = {"A0", "A1", "A2", "A3", "A4", "A5"}
+# Pines digitales que además soportan PWM (analogWrite), marcados
+# con '~' en la placa física.
+PWM_PINS: Set[int] = {3, 5, 6, 9, 10, 11}
 
-# ------------------------------------------------------------------
-# Modos de operación permitidos según el tipo de pin.
-# (Los pines analógicos del DSL se modelan solo para lectura, como
-# analogRead(); si más adelante se agrega analogWrite()/PWM se puede
-# ampliar este catálogo sin tocar el analizador semántico.)
-# ------------------------------------------------------------------
-ALLOWED_MODES: Dict[str, Set[str]] = {
-    "digital": {"OUTPUT", "INPUT", "INPUT_PULLUP"},
-    "analog": {"INPUT", "INPUT_PULLUP"},
-}
-
-# ------------------------------------------------------------------
-# Pines reservados por la propia placa: 0 y 1 son el puerto serie
-# (UART), usado también para programar el Arduino por USB. No están
-# prohibidos, pero declararlos genera una ADVERTENCIA.
-# ------------------------------------------------------------------
+# Pines con un uso especial reservado por el propio hardware/placa.
+# No están prohibidos por el DSL, pero usarlos para propósito general
+# puede traer problemas (por eso el analizador los reporta como
+# advertencia y no como error).
 RESERVED_PINS: Dict[int, str] = {
     0: "RX - usado por el puerto serie (comunicación USB/UART)",
     1: "TX - usado por el puerto serie (comunicación USB/UART)",
+    13: "conectado al LED integrado (L) de la placa",
 }
 
 # ------------------------------------------------------------------
-# Límite del firmware: delay() recibe un unsigned long (32 bits) en
-# milisegundos.
+# Pines analógicos (no usados todavía por el DSL; se incluyen para
+# facilitar una futura extensión con analogRead()/analogWrite()).
 # ------------------------------------------------------------------
+ANALOG_PINS: Dict[str, int] = {
+    "A0": 14, "A1": 15, "A2": 16, "A3": 17, "A4": 18, "A5": 19,
+}
+
+# ------------------------------------------------------------------
+# Límites propios del firmware de Arduino
+# ------------------------------------------------------------------
+# delay() recibe un unsigned long (32 bits) en milisegundos.
 DELAY_MAX_MS = 4294967295
 
 
-def get_pin_type(pin_ref_text: str) -> Optional[str]:
-    """'digital' si el texto son solo dígitos, 'analog' si es A0-A5,
-    o None si no tiene una forma reconocible."""
-    if pin_ref_text.isdigit():
-        return "digital"
-    if pin_ref_text in ANALOG_PINS:
-        return "analog"
-    return None
+# ------------------------------------------------------------------
+# FASE 2: API de Arduino que invoca el código intermedio
+# ------------------------------------------------------------------
+# Valores numéricos que Arduino.h da a las constantes del DSL.
+PIN_MODE_CODES: Dict[str, int] = {"INPUT": 0, "OUTPUT": 1, "INPUT_PULLUP": 2}
+LEVEL_CODES: Dict[str, int] = {"LOW": 0, "HIGH": 1}
 
 
-def is_valid_pin(pin_ref_text: str) -> bool:
-    """True si el pin (digital o analógico) existe físicamente en el
-    Arduino Uno."""
-    tipo = get_pin_type(pin_ref_text)
-    if tipo == "digital":
-        return DIGITAL_PIN_MIN <= int(pin_ref_text) <= DIGITAL_PIN_MAX
-    if tipo == "analog":
-        return pin_ref_text in ANALOG_PINS
-    return False
+@dataclass(frozen=True)
+class ArduinoFunction:
+    """Función externa del núcleo de Arduino. En el código intermedio
+    todos los parámetros se modelan como enteros de 32 bits."""
+    name: str
+    n_params: int
+    returns_value: bool
+
+
+ARDUINO_API: Dict[str, ArduinoFunction] = {
+    "pinMode":      ArduinoFunction("pinMode", 2, False),
+    "digitalWrite": ArduinoFunction("digitalWrite", 2, False),
+    "digitalRead":  ArduinoFunction("digitalRead", 1, True),
+    "delay":        ArduinoFunction("delay", 1, False),
+}
+
+
+@dataclass
+class PinInfo:
+    number: int
+    is_digital: bool = True
+    supports_pwm: bool = False
+    reserved_reason: Optional[str] = None
+
+
+def get_pin_info(number: int) -> Optional[PinInfo]:
+    """Ficha de hardware de un pin digital, o None si el número no
+    corresponde a ningún pin físico del Arduino Uno."""
+    if not is_valid_digital_pin(number):
+        return None
+    return PinInfo(
+        number=number,
+        is_digital=True,
+        supports_pwm=number in PWM_PINS,
+        reserved_reason=RESERVED_PINS.get(number),
+    )
 
 
 def is_valid_digital_pin(number: int) -> bool:
+    """True si el número está dentro del rango físico de pines
+    digitales del Arduino Uno (0-13)."""
     return DIGITAL_PIN_MIN <= number <= DIGITAL_PIN_MAX
 
 
-def is_mode_allowed(pin_type: str, mode: str) -> bool:
-    """True si 'mode' es un modo de operación válido para ese tipo de
-    pin, según el catálogo."""
-    return mode in ALLOWED_MODES.get(pin_type, set())
+def is_reserved(number: int) -> Optional[str]:
+    """Devuelve el motivo por el que un pin está reservado, o None si
+    el pin es de uso general."""
+    return RESERVED_PINS.get(number)
 
 
-def is_reserved(pin_ref_text: str) -> Optional[str]:
-    """Devuelve el motivo por el que un pin está reservado por el
-    hardware, o None si es de uso general. Solo aplica a pines
-    digitales (0 y 1); los pines analógicos no tienen reserva."""
-    if pin_ref_text.isdigit():
-        return RESERVED_PINS.get(int(pin_ref_text))
-    return None
+def supports_pwm(number: int) -> bool:
+    return number in PWM_PINS
